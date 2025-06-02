@@ -1,0 +1,226 @@
+Guía laboratorio de migración de datos.
+
+Tomar en cuenta, se levanta la vpc con rds automaticamente desde el template de cloudformation. 
+a partir de ahí, se les deja a los alumnos algun link que apunte a un S3 donde está el archivo worldurank.sql
+ese script sql, la idea esque lo descarguen en su computadora, y luego en la consola de AWS, usen CloudShell y suban el archivo al entorno
+dentro del cloudshell tendran que instalar el recurso de sqlcmd, cuyos pasos son los siguientes:
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+# 1. Añadir el repositorio de Microsoft
+sudo curl https://packages.microsoft.com/config/rhel/7/prod.repo | sudo tee /etc/yum.repos.d/msprod.repo
+
+# 2. Instalar las herramientas y el driver ODBC
+sudo yum install -y mssql-tools msodbcsql17
+
+# 3. Hacer que el comando sqlcmd sea permanente para futuras sesiones
+echo 'export PATH="$PATH:/opt/mssql-tools/bin"' >> ~/.bashrc
+
+# 4. Aplicar la configuración a la sesión actual
+    source ~/.bashrc
+
+# 5. Verificar la instalación (opcional)
+sqlcmd -?
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+luego de tener instalado el sqlcmd, lo que haran es ejecutar el siguiente comando para crear una database dentro de la rds:
+
+sqlcmd -S RDS_ENDPOINT -U admin -P "#LabDBase3!" -Q "CREATE DATABASE UniversityDB;"
+
+IMPORTANTE REEMPLAZAR 'RDS_ENDPOINT' POR EL ENDPOINT DE LA RDS DEL LABORATORIO
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+luego usamos el siguiente comando para ejecutar el script de nuestro archivo sql brindado, dentro de la database:
+
+sqlcmd -S RDS_ENDPOINT -U admin -P "#LabDBase3!" -d UniversityDB -i worldurank.sql
+
+si el output es algo como (500 rows affected) y demás, significa que funcionó correctamente.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Por último para comprobar que funcionó, usamos el siguiente comando para consultar las primeras 5 filas de los datos que importamos:
+
+sqlcmd -S RDS_ENDPOINT -U admin -P "#LabDBase3!" -d UniversityDB -Q "SELECT TOP 5 * FROM UniversityScores;"
+
+el output debería ser todas las columnas del archivo wordlurank.sql 
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Una vez verificado que nuestra RDS ya tiene su database con los datos que insertamos con el .sql, proseguimos con el laboratorio.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Antes de iniciar con la creación de la instancia DMS, es necesario crear un Security Group el cual permitirá dar accesos para conectarnos a los diferentes puntos de
+migración. Y también crear un subnet replication group para configurar la instancia DMS.
+
+En AWS Management Console, vamos a EC2, luego Network & Security y despues Security Groups, le damos a Create security group
+
+Especificaremos a que VPC pertenece y le daremos reglas de entrada y salida. 
+
+En este caso seleccionamos la Lab-VPC, en Inbound rules dejamos dos, una que esta por defecto que es Type: 'All traffic' y Source: '0.0.0.0/0'
+la otra inbound rule, establecemos Type: 'RDP' (TCP Protocol y Port 3389, ambos se deberian poner por defecto igualmente), Source de nuevo: '0.0.0.0/0'
+
+En Outbound rules dejamos una regla Type: 'All traffic' y Source: '0.0.0.0/0'
+
+Finalmente creamos el Grupo de Seguridad.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Buscamos DMS dentro de la AWS Management Console
+
+En la pagina de DMS, vamos a donde dice "Subnet groups", una vez dentro le damos a "Create subnet group", de ponemos de nombre "dms-subnetgroup", elegimos la Lab-VPC,
+en "Add Subnets" seleccionamos las 2 subnets de la Lab-VPC, agregamos etiquetas y le damos a crear.
+
+En la misma pagina de DMS, seleccionaremos la opción “Crear una instancia de replicación” en la cual detallaremos un nombre y descripción. Además
+de elegir la clase de instancia y la versión del motor. Se selecciona la versión 3.5.3 debido a que esta no presenta errores con los motores de BD.
+
+Elegimos la VPC, en este caso Lab-VPC y habilitamos la opción de “Accesible públicamente”
+
+Si hay una opcion obligatoria de High Availability Zone, ponemos Dev or Test Single AZ
+
+Seleccionamos el grupo de subredes de replicación, seleccionamos una Zona de disponibilidad y el Security Group el cual hemos creado.
+
+Finalmente indicamos una etiqueta y creamos la instancia DMS
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Creación Endpoints
+
+EndPoint 1: Asignamos un nombre y un motor de origen, en este caso usaremos la
+BD SQL SERVER AWS RDS y agregamos los parámetros solicitados.
+
+Elegimos "Source endpoint", seleccionamos "Select RDS DB Instance", elegimos nuestra RDS, en endpoint identifier le ponemos "lab-ep1".
+en "Source Engine" ponemos Microsoft SQL Server, en la sección "Access to endpoint database" seleccionamos la opcion "Provide access information manually".
+
+En "Server name" se debe llenar automaticamente, si no le ponemos el endpoint de la RDS, en "Port" ponemos 1433. 
+
+En "User name" dejamos "admin" y en Password ponemos la de la RDS que es "#LabDBase3!" y en "Database name" ponemos "UniversityDB"
+
+Vamos al final donde dice "Test endpoint connection", ponemos nuestra instancia DMS y  y ejecutamos el test de conexión. 
+La conexión entre el RDS y la instancia DMS ha sido exitosa.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Creación de Rol de AWS Redshift
+
+Nos ubicamos en la instancia de IAM, vamos a Roles, "Create Role".  
+
+Elegimos "AWS Service", en use case seleccionamos "Redshift - Customizable" y le damos a Next
+
+en Add Permissions buscamos la politica de "AmazonS3ReadOnlyAccess" y le damos a Next
+
+en Name, review and create, ponemos el nombre del rol, en este caso ponemos "myRedshiftRole", dejamos la descripción que está puesta automaticamente.
+
+Añadimos etiquetas y le damos a crear rol.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Buscamos Redshift en la Consola de AWS.
+
+en el menú de la izquierda, buscamos en Configurations y seleccionamos "Subnet groups".
+
+le damos a "Create cluster subnet group", dejamos el nombre tal cual, en descripción ponemos "lab subnet group", en Add subnets elegimos la Lab-VPC,
+le damos al botón de "Add all the subnets for this VPC". En Availability Zone elegimos cualquiera de las dos y la subnet que nos aparezca.
+
+en la página buscamos la opcion de "Create cluster"
+
+en cluster identifier ponemos "lab-cluster"
+
+elegimos la opcion de "I'll choose" y en Node type elegimos: "dc2.large" y en Number of nodes: "1"
+
+en Sample data seleccionamos la opcion "Load sample data"
+
+en Database configurations, dejamos el admin username como: "awsuser"
+
+en Admin password seleccionamos "Manually add the admin password" y ponemos la contraseña "#LabDBase3!"
+
+y por ultimo bajamos hasta Networking & Security, elegimos el Lab-VPC, dejas default en security group, en Cluster subnet group elegimos el cluster subnet que creamos antes,
+y seleccionamos "Turn on Publicly accesible", creamos.
+
+cuando hayamos creado seleccionamos el Cluster, vamos al desplegable de "Actions", en Permissions, 
+le daremos al boton de "Associate IAM roles", se abrirá una ventana en la cual deberá
+aparecer el rol que creamos antes, en este caso "myRedshiftRole" y le damos al boton "Associate IAM Role"
+
+IMPORTANTE: si el cluster de Redshift quedo conectado al security group default de la Lab-VPC, tendremos que añadirle una inbound rule al mismo. Vamos al security group que tiene
+tiene asignado el cluster, vamos a inbound rules, edit inbound rules, add rule, añadimos una regla tipo Redshift, port: 5439, y Source dejamos 0.0.0.0/0
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Creación Endpoints
+
+Endpoint 2: Dentro de DMS - creamos un nuevo EndPoint de conexión de la instancia
+DMS creada al cluster de Redshift creado. 
+
+Elegimos el tipo de endpoint como "Target endpoint", en endpoint identifier ponemos "lab-ep2"
+
+en Target engine ponemos "Amazon Redshift", en la sección "Access to endpoint database" seleccionamos la opcion "Provide access information manually".
+
+En "Server name" le ponemos el endpoint del cluster, en "Port" ponemos 5439.
+
+En "User name" ponemos "awsuser" y en Password ponemos la de la RDS que es "#LabDBase3!", y en "Database name" ponemos "dev".
+
+y testeamos la conexión del endpoint, si sale "succesful" podemos seguir al siguiente punto. (si sale failed por network error, es por que el 
+security group del cluster no tiene el inbound rule de Redshift:5439)
+
+(en caso de no resolverse el error de conexion entre el endpoint y redshift, ve al cluster, luego a modify, y vuelve a poner la contraseña de awsuser. 
+si no, mira de nuevo en modify y ajusta el servername de forma que termine en ...amazonaws.com, y no en ...amazonaws.com:5439/dev)
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Creación de la Tarea de migración
+
+En la pagina de DMS, vamos a la sección Database migration tasks.
+
+Le damos al boton de Create task
+
+En task configuration, ponemos el nombre de la tarea: "lab-task", en Replication instance seleccionamos la ya creada,
+en Source database endpoint elegimos nuestro endpoint 1 (source type: RDS), y en Target elegimos el endpoint 2 (target type: Redshift)
+
+finalmente en Migration type dejamos seleccionado la opción "Migrate"
+
+Bajamos hasta la parte de "Table mappings", desplegamos "Selection rules" y le damos al boton Add new selection rule
+
+en Schema elegimos "Enter a schema", en Source Name ponemos "dbo", Table name dejamos el predeterminado: "%" y Action en "Include". 
+
+revisamos que en Premigration Assessment no este activada la opcion "Turn on premigration assessment". 
+
+Finalmente le damos a Create database migration task
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Estado inicial de la tarea
+
+Aquí esperaremos y monitoreamos los estados de la tarea. 
+
+Debe de pasar de Creating, A starting, y finalmente en Load Complete. 
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Verificamos en la task que se haya la tabla:
+
+debe salir una tabla schema dbo y su nombre "UniversityScores"
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Validación de la tarea de migración en AWS Redshift
+
+En Redshift vamos a Query Editor, y hacemos una query de prueba para visualizar,
+que esten todas las columnas de la tabla que se migró: "select * from dbo.UniversityScores"
+
+Le damos a Run, si nos sale una ventana de create connection, seleccionamos "Create a new connection", en Authentication dejamos marcada la
+opcion de "Temporary credentials", seleccionamos nuestro cluster, en database name ponemos "dev": y en database user: "awsuser"
+
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Notas Finales (por si hay dudas)
+
+Dentro del cluster en Redshift se utilizó los siguientes roles: (imagen)
+
+En rol dms-access-for-endpoint (imagen) 
+
+En myRedshiftRole (imagen) 
+
+------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Felicidades, ha completado el laboratorio.
