@@ -417,6 +417,7 @@ Si el cluster de Redshift quedó conectado al security group default de la Lab-V
 * Source database endpoint: Elige tu endpoint de origen (lab-ep1 - RDS SQL Server).
 * Target database endpoint: Elige tu endpoint de destino (lab-ep2 - Redshift).
 * Migration type: Deja seleccionada la opción Migrate existing data (Migrar datos existentes).
+
 ![Logo de Mi Proyecto](https://raw.githubusercontent.com/sebasshb/LabDMSResources/refs/heads/main/Captura32.png)
 
 ### 12.2. Mapeo de Tablas (Table Mappings)
